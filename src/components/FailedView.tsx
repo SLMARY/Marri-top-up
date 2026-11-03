@@ -1,5 +1,6 @@
 import React from 'react';
 import { XCircle, RefreshCw, MessageCircle, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { safeRenderText } from '../utils/errorUtils';
 
 interface FailedViewProps {
   errorDetails?: {
@@ -8,7 +9,7 @@ interface FailedViewProps {
     gameName?: string;
     playerId?: string;
     amount?: number;
-    reason?: string;
+    reason?: unknown;
   };
   onTryAgain: () => void;
   businessWhatsApp: string;
@@ -19,11 +20,18 @@ export const FailedView: React.FC<FailedViewProps> = ({
   onTryAgain,
   businessWhatsApp,
 }) => {
-  const cleanPhone = businessWhatsApp.replace(/[^0-9]/g, '');
+  const cleanPhone = (businessWhatsApp || '0742235836').replace(/[^0-9]/g, '');
+  const safeReason = safeRenderText(
+    errorDetails?.reason,
+    'We were unable to process your payment through the PayHere gateway. No charges were deducted from your account.'
+  );
+  const safeOrderId = safeRenderText(errorDetails?.orderId, 'N/A');
+  const safeGameName = safeRenderText(errorDetails?.gameName, '');
+
   const message = `Hello Uchiha Marri Top Up, my payment failed.
-Order ID: ${errorDetails?.orderId || 'N/A'}
+Order ID: ${safeOrderId}
 Amount: Rs. ${errorDetails?.amount || 0} LKR
-Reason: ${errorDetails?.reason || 'Payment failed on PayHere'}
+Reason: ${safeReason}
 Could you please assist me?`;
 
   const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
@@ -51,8 +59,7 @@ Could you please assist me?`;
             PAYMENT FAILED!
           </h1>
           <p className="mt-2 text-sm text-zinc-300 max-w-md mx-auto">
-            {errorDetails?.reason ||
-              'We were unable to process your payment through the PayHere gateway. No charges were deducted from your account.'}
+            {safeReason}
           </p>
 
           {/* Details breakdown */}
@@ -61,13 +68,13 @@ Could you please assist me?`;
               {errorDetails.orderId && (
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Order ID:</span>
-                  <span className="font-mono text-white font-bold">{errorDetails.orderId}</span>
+                  <span className="font-mono text-white font-bold">{safeOrderId}</span>
                 </div>
               )}
-              {errorDetails.gameName && (
+              {safeGameName && (
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Game Target:</span>
-                  <span className="text-white font-bold">{errorDetails.gameName}</span>
+                  <span className="text-white font-bold">{safeGameName}</span>
                 </div>
               )}
               {errorDetails.amount && (

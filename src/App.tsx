@@ -70,10 +70,26 @@ export default function App() {
   // Fetch store configuration on mount
   const fetchConfig = () => {
     fetch('/api/payhere/config')
-      .then((res) => res.json())
-      .then((data: PayHereConfig) => {
-        if (data) {
-          setConfig(data);
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json().catch(() => null);
+      })
+      .then((data: any) => {
+        if (data && typeof data === 'object' && !data.error) {
+          setConfig((prev) => ({
+            ...prev,
+            merchantId: typeof data.merchantId === 'string' ? data.merchantId : prev.merchantId,
+            isSandbox: typeof data.isSandbox === 'boolean' ? data.isSandbox : prev.isSandbox,
+            businessWhatsApp:
+              typeof data.businessWhatsApp === 'string' && data.businessWhatsApp.trim()
+                ? data.businessWhatsApp.trim()
+                : prev.businessWhatsApp,
+            businessName:
+              typeof data.businessName === 'string' && data.businessName.trim()
+                ? data.businessName.trim()
+                : prev.businessName,
+            hasCustomSecret: Boolean(data.hasCustomSecret),
+          }));
         }
       })
       .catch((err) => console.error('Failed to load store config:', err));

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Settings, X, Shield, Check, AlertCircle, KeyRound, Phone, Server, Lock } from 'lucide-react';
 import { PayHereConfig } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -79,9 +80,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         let errMsg = 'Failed to update settings';
         try {
           const parsed = JSON.parse(text);
-          if (parsed.error) errMsg = parsed.error;
+          errMsg = extractErrorMessage(parsed?.error ?? parsed, 'Failed to update settings');
         } catch {
-          if (text) errMsg = text;
+          if (text) errMsg = extractErrorMessage(text, 'Failed to update settings');
         }
         throw new Error(errMsg);
       }
@@ -89,8 +90,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setSavedSuccess(true);
       onConfigUpdated();
       setTimeout(() => setSavedSuccess(false), 3000);
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Error updating settings');
+    } catch (err: unknown) {
+      setErrorMessage(extractErrorMessage(err, 'Error updating settings'));
     } finally {
       setIsSaving(false);
     }
@@ -126,7 +127,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {errorMessage && (
             <div className="flex items-center gap-2 rounded-lg bg-red-950/60 border border-red-500/40 p-3 text-red-300">
               <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errorMessage}</span>
+              <span>{safeRenderText(errorMessage)}</span>
             </div>
           )}
 

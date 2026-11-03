@@ -5,6 +5,7 @@ import {
   CustomerLoginPayload,
   CustomerProfileUpdatePayload,
 } from '../types';
+import { extractErrorMessage } from '../utils/errorUtils';
 
 const TOKEN_STORAGE_KEY = 'uchiha_customer_token';
 const CUSTOMER_STORAGE_KEY = 'uchiha_customer_profile';
@@ -22,9 +23,34 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function normalizeCustomerProfile(raw: unknown): CustomerProfile | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.id !== 'string' || typeof obj.email !== 'string') {
+    return null;
+  }
+  return {
+    id: String(obj.id),
+    fullName: typeof obj.fullName === 'string' && obj.fullName.trim() ? obj.fullName.trim() : 'Customer',
+    email: String(obj.email).trim().toLowerCase(),
+    whatsappNumber: typeof obj.whatsappNumber === 'string' ? obj.whatsappNumber : '',
+    billingAddress: typeof obj.billingAddress === 'string' ? obj.billingAddress : '',
+    city: typeof obj.city === 'string' ? obj.city : '',
+    country: typeof obj.country === 'string' && obj.country.trim() ? obj.country : 'Sri Lanka',
+    createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : new Date().toISOString(),
+    updatedAt:
+      typeof obj.updatedAt === 'string'
+        ? obj.updatedAt
+        : typeof obj.createdAt === 'string'
+        ? obj.createdAt
+        : new Date().toISOString(),
+  };
+}
+
 function getSavedToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    const val = localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    return typeof val === 'string' && val.trim() ? val.trim() : null;
   } catch {
     return null;
   }
@@ -33,7 +59,9 @@ function getSavedToken(): string | null {
 function getSavedCustomer(): CustomerProfile | null {
   try {
     const raw = localStorage.getItem(CUSTOMER_STORAGE_KEY) || sessionStorage.getItem(CUSTOMER_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as CustomerProfile) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeCustomerProfile(parsed);
   } catch {
     return null;
   }
@@ -99,11 +127,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       const data = await res.json().catch(() => null);
-      if (data?.success && data.customer && typeof data.customer === 'object') {
-        setCustomer(data.customer);
+      const validCustomer = normalizeCustomerProfile(data?.customer);
+      if (data?.success && validCustomer) {
+        setCustomer(validCustomer);
         setToken(activeToken);
         const isRemembered = Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
-        persistAuthSession(activeToken, data.customer, isRemembered);
+        persistAuthSession(activeToken, validCustomer, isRemembered);
       }
     } catch (err) {
       console.warn('[Auth] Unable to refresh profile:', err);
@@ -124,20 +153,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success || !data.token || !data.customer) {
+      const validCustomer = normalizeCustomerProfile(data?.customer);
+      if (!res.ok || !data?.success || typeof data.token !== 'string' || !validCustomer) {
         return {
           success: false,
-          error: data?.error || 'Login failed. Please check your email and password.',
+          error: extractErrorMessage(
+            data?.error ?? data,
+            'Login failed. Please check your email and password.'
+          ),
         };
       }
       const remember = payload.rememberMe !== false;
-      persistAuthSession(data.token, data.customer, remember);
+      persistAuthSession(data.token, validCustomer, remember);
       setToken(data.token);
-      setCustomer(data.customer);
+      setCustomer(validCustomer);
       setIsLoading(false);
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Network error occurred during login.' };
+    } catch (err: unknown) {
+      return {
+        success: false,
+        error: extractErrorMessage(err, 'Network error occurred during login. Please try again.'),
+      };
     }
   };
 
@@ -149,19 +185,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success || !data.token || !data.customer) {
+      const validCustomer = normalizeCustomerProfile(data?.customer);
+      if (!res.ok || !data?.success || typeof data.token !== 'string' || !validCustomer) {
         return {
           success: false,
-          error: data?.error || 'Registration failed. Please check your details and try again.',
+          error: extractErrorMessage(
+            data?.error ?? data,
+            'Registration failed. Please check your details and try again.'
+          ),
         };
       }
-      persistAuthSession(data.token, data.customer, true);
+      persistAuthSession(data.token, validCustomer, true);
       setToken(data.token);
-      setCustomer(data.customer);
+      setCustomer(validCustomer);
       setIsLoading(false);
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Network error occurred during registration.' };
+    } catch (err: unknown) {
+      return {
+        success: false,
+        error: extractErrorMessage(err, 'Network error occurred during registration. Please try again.'),
+      };
     }
   };
 
@@ -197,15 +240,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) {
-        return { success: false, error: data?.error || 'Failed to update profile.' };
+      const validCustomer = normalizeCustomerProfile(data?.customer);
+      if (!res.ok || !data?.success || !validCustomer) {
+        return {
+          success: false,
+          error: extractErrorMessage(data?.error ?? data, 'Failed to update profile.'),
+        };
       }
       const isRemembered = Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
-      persistAuthSession(token, data.customer, isRemembered);
-      setCustomer(data.customer);
+      persistAuthSession(token, validCustomer, isRemembered);
+      setCustomer(validCustomer);
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Network error occurred while updating profile.' };
+    } catch (err: unknown) {
+      return {
+        success: false,
+        error: extractErrorMessage(err, 'Network error occurred while updating profile.'),
+      };
     }
   };
 

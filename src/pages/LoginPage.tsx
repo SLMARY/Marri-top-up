@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
@@ -32,7 +33,6 @@ export const LoginPage: React.FC = () => {
   const [resetEmail, setResetEmail] = useState('');
   const [resetWhatsapp, setResetWhatsapp] = useState('');
   const [resetCode, setResetCode] = useState('');
-  const [generatedCodeHint, setGeneratedCodeHint] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
@@ -59,7 +59,7 @@ export const LoginPage: React.FC = () => {
     setIsSubmitting(false);
 
     if (!result.success) {
-      setErrorMessage(result.error || 'Invalid email or password.');
+      setErrorMessage(extractErrorMessage(result.error, 'Invalid email or password.'));
       return;
     }
 
@@ -95,13 +95,14 @@ export const LoginPage: React.FC = () => {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success) {
-        setErrorMessage(data?.error || 'Could not process password reset request.');
+        setErrorMessage(
+          extractErrorMessage(data?.error ?? data, 'Could not process password reset request.')
+        );
       } else {
-        setGeneratedCodeHint(null);
         setForgotMode('RESET');
       }
-    } catch {
-      setErrorMessage('Network error while requesting password reset.');
+    } catch (err: unknown) {
+      setErrorMessage(extractErrorMessage(err, 'Network error while requesting password reset.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -126,15 +127,15 @@ export const LoginPage: React.FC = () => {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success) {
-        setErrorMessage(data?.error || 'Password reset failed.');
+        setErrorMessage(extractErrorMessage(data?.error ?? data, 'Password reset failed.'));
       } else {
         setSuccessBanner('Password reset complete! You can now sign in with your new password.');
         setEmail(resetEmail.trim());
         setPassword('');
         setForgotMode('NONE');
       }
-    } catch {
-      setErrorMessage('Network error while resetting password.');
+    } catch (err: unknown) {
+      setErrorMessage(extractErrorMessage(err, 'Network error while resetting password.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -177,14 +178,14 @@ export const LoginPage: React.FC = () => {
                 {successBanner && (
                   <div className="flex items-center gap-3 rounded-xl bg-emerald-950/80 border border-emerald-500/50 p-4 text-xs text-emerald-200">
                     <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                    <span>{successBanner}</span>
+                    <span>{safeRenderText(successBanner)}</span>
                   </div>
                 )}
 
                 {errorMessage && (
                   <div className="flex items-center gap-3 rounded-xl bg-red-950/80 border border-red-500/50 p-4 text-xs text-red-200">
                     <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-                    <span>{errorMessage}</span>
+                    <span>{safeRenderText(errorMessage)}</span>
                   </div>
                 )}
 
@@ -304,7 +305,7 @@ export const LoginPage: React.FC = () => {
                 {errorMessage && (
                   <div className="flex items-center gap-3 rounded-xl bg-red-950/80 border border-red-500/50 p-3.5 text-xs text-red-200">
                     <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                    <span>{errorMessage}</span>
+                    <span>{safeRenderText(errorMessage)}</span>
                   </div>
                 )}
 
@@ -371,7 +372,7 @@ export const LoginPage: React.FC = () => {
                 {errorMessage && (
                   <div className="flex items-center gap-3 rounded-xl bg-red-950/80 border border-red-500/50 p-3.5 text-xs text-red-200">
                     <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                    <span>{errorMessage}</span>
+                    <span>{safeRenderText(errorMessage)}</span>
                   </div>
                 )}
 

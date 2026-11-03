@@ -11,6 +11,7 @@ import {
   RefreshCw,
   ExternalLink,
 } from 'lucide-react';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 export interface VerifiedPlayerAccount {
   uid: string;
@@ -109,16 +110,18 @@ export const FreeFireUidVerifier: React.FC<FreeFireUidVerifierProps> = ({
         body: JSON.stringify({ uid: cleanUid, game: 'free_fire' }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Player ID not found. Please double-check your UID.');
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          extractErrorMessage(data?.error ?? data, 'Player ID not found. Please double-check your UID.')
+        );
       }
 
       const account: VerifiedPlayerAccount = {
-        uid: data.uid,
-        username: data.username,
-        region: data.region || 'SG/MY',
+        uid: String(data.uid || cleanUid),
+        username: String(data.username || 'Player'),
+        region: String(data.region || 'SG/MY'),
       };
 
       setInternalVerified(account);
@@ -126,8 +129,10 @@ export const FreeFireUidVerifier: React.FC<FreeFireUidVerifierProps> = ({
       if (onVerified) {
         onVerified(account);
       }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Verification failed. Please check your network connection.');
+    } catch (err: unknown) {
+      setErrorMessage(
+        extractErrorMessage(err, 'Verification failed. Please check your network connection.')
+      );
       setInternalVerified(null);
       if (onReset) onReset();
     } finally {
@@ -168,7 +173,7 @@ export const FreeFireUidVerifier: React.FC<FreeFireUidVerifierProps> = ({
               onClick={handleClear}
               className="cursor-pointer inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900/90 hover:bg-zinc-800 hover:border-zinc-600 px-3 py-1.5 text-xs font-bold text-zinc-300 transition-colors"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className="h-3.5 h-3.5" />
               <span>Change UID</span>
             </button>
           </div>
@@ -257,7 +262,7 @@ export const FreeFireUidVerifier: React.FC<FreeFireUidVerifierProps> = ({
           {errorMessage && (
             <div className="flex items-center gap-2 text-xs text-red-400 bg-red-950/40 border border-red-500/40 rounded-lg p-2.5 animate-in fade-in duration-200">
               <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errorMessage}</span>
+              <span>{safeRenderText(errorMessage)}</span>
             </div>
           )}
 

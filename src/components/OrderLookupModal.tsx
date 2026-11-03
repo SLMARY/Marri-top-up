@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Search, X, Loader2, CheckCircle2, AlertCircle, Download, FileText, Image as ImageIcon } from 'lucide-react';
 import { downloadReceiptPdf, downloadReceiptPng, ReceiptData } from '../utils/receiptGenerator';
 import { useAuth } from '../context/AuthContext';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 interface OrderLookupModalProps {
   isOpen: boolean;
@@ -52,18 +53,23 @@ export const OrderLookupModal: React.FC<OrderLookupModalProps> = ({
         { headers }
       );
       const text = await res.text();
-      let data = null;
+      let data: any = null;
       try {
         data = text ? JSON.parse(text) : null;
       } catch {
         // ignore non-json
       }
-      if (!res.ok || !data) {
-        throw new Error(data?.error || 'Transaction not found or you are not authorized to view this order.');
+      if (!res.ok || !data || data.error) {
+        throw new Error(
+          extractErrorMessage(
+            data?.error ?? data,
+            'Transaction not found or you are not authorized to view this order.'
+          )
+        );
       }
       setResult(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to locate order.');
+    } catch (err: unknown) {
+      setError(extractErrorMessage(err, 'Failed to locate order.'));
     } finally {
       setLoading(false);
     }
@@ -176,7 +182,7 @@ export const OrderLookupModal: React.FC<OrderLookupModalProps> = ({
         {error && (
           <div className="flex items-center gap-2 rounded-lg bg-red-950/60 border border-red-500/40 p-3 text-xs text-red-300">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
+            <span>{safeRenderText(error)}</span>
           </div>
         )}
 

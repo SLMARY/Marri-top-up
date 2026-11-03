@@ -35,6 +35,7 @@ import {
 } from '../types';
 import { FreeFireUidVerifier, VerifiedPlayerAccount } from './FreeFireUidVerifier';
 import { useAuth } from '../context/AuthContext';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 import securityBadgeImg from '../assets/images/payment_security_shield_1793641924972.jpg';
 
 declare global {
@@ -177,7 +178,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
     if (res.success) {
       setIsEditingSavedBilling(false);
     } else {
-      setErrorMessage(res.error || 'Could not update billing profile.');
+      setErrorMessage(extractErrorMessage(res.error, 'Could not update billing profile.'));
     }
   };
 
@@ -287,7 +288,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
         statusText: 'Network Error',
         json: null,
         rawText: '',
-        networkError: networkErr?.message || 'Network request failed',
+        networkError: extractErrorMessage(networkErr, 'Network request failed'),
       };
     }
   };
@@ -370,13 +371,17 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
       });
 
       if (!result.ok || !result.json || !result.json.success) {
-        const serverError =
-          result.json?.error ||
-          result.json?.details ||
-          (result.rawText && !result.rawText.includes('<html') ? result.rawText : null) ||
-          (result.networkError ? `Connection error: ${result.networkError}` : `Server returned HTTP ${result.status} (${result.statusText})`);
+        const extractedError = extractErrorMessage(
+          result.json?.error ??
+            result.json?.details ??
+            result.json ??
+            (result.rawText && !result.rawText.includes('<html') ? result.rawText : null),
+          result.networkError
+            ? `Connection error: ${result.networkError}`
+            : `Server returned HTTP ${result.status} (${result.statusText || 'Error'})`
+        );
 
-        throw new Error(serverError);
+        throw new Error(extractedError);
       }
 
       const { orderId, orderAccessToken, payhereData, checkoutUrl } = result.json;
@@ -400,11 +405,14 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
       });
 
       submitPayHereCheckout(checkoutUrl, payhereData);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[Payment Submit Error]:', err);
       setIsSubmitting(false);
       setErrorMessage(
-        err?.message || 'An error occurred while connecting to PayHere gateway. Please try again or contact WhatsApp support.'
+        extractErrorMessage(
+          err,
+          'An error occurred while connecting to PayHere gateway. Please try again or contact WhatsApp support.'
+        )
       );
     }
   };
@@ -440,7 +448,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
             {errorMessage && (
               <div className="flex items-center gap-3 rounded-lg bg-red-950/80 border border-red-500/50 p-4 text-sm text-red-200">
                 <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-                <span>{errorMessage}</span>
+                <span>{safeRenderText(errorMessage)}</span>
               </div>
             )}
 

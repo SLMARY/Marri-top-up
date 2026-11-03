@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -16,10 +17,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     errorMessage: '',
   };
 
-  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  public static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
     return {
       hasError: true,
-      errorMessage: error?.message || 'An unexpected application error occurred.',
+      errorMessage: extractErrorMessage(error, 'An unexpected application error occurred.'),
     };
   }
 
@@ -55,7 +56,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             </div>
             {this.state.errorMessage && (
               <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3 text-left text-[11px] font-mono text-red-300 break-words">
-                {this.state.errorMessage}
+                {safeRenderText(this.state.errorMessage)}
               </div>
             )}
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">

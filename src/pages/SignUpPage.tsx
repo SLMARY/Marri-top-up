@@ -12,6 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 export const SignUpPage: React.FC = () => {
   const { register } = useAuth();
@@ -90,7 +91,7 @@ export const SignUpPage: React.FC = () => {
     setIsSubmitting(false);
 
     if (!result.success) {
-      setErrorMessage(result.error || 'Could not create account. Please try again.');
+      setErrorMessage(extractErrorMessage(result.error, 'Could not create account. Please try again.'));
       return;
     }
 
@@ -136,7 +137,7 @@ export const SignUpPage: React.FC = () => {
             {errorMessage && (
               <div className="flex items-center gap-3 rounded-xl bg-red-950/80 border border-red-500/50 p-4 text-xs sm:text-sm text-red-200">
                 <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-                <span>{errorMessage}</span>
+                <span>{safeRenderText(errorMessage)}</span>
               </div>
             )}
 

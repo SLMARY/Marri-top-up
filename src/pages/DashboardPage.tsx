@@ -21,6 +21,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { ReceiptPreviewCard } from '../components/ReceiptPreviewCard';
 import { ReceiptData, TransactionDetails } from '../types';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 type DashboardTab =
   | 'profile'
@@ -90,7 +91,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       if (res.ok && data?.success) {
         const loadedOrders: TransactionDetails[] = Array.isArray(data.orders) ? data.orders : [];
         setOrders(loadedOrders);
-        setSummary(data.summary || { total: 0, successful: 0, pending: 0, failed: 0 });
+        setSummary(
+          data.summary && typeof data.summary === 'object'
+            ? {
+                total: Number(data.summary.total || 0),
+                successful: Number(data.summary.successful || 0),
+                pending: Number(data.summary.pending || 0),
+                failed: Number(data.summary.failed || 0),
+              }
+            : { total: 0, successful: 0, pending: 0, failed: 0 }
+        );
         if (loadedOrders.length > 0) {
           setSelectedOrder((prev) => prev || loadedOrders[0]);
         }
@@ -130,7 +140,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
     setSavingProfile(false);
     if (!result.success) {
-      setProfileMessage({ type: 'error', text: result.error || 'Failed to update profile.' });
+      setProfileMessage({
+        type: 'error',
+        text: extractErrorMessage(result.error, 'Failed to update profile.'),
+      });
     } else {
       setCurrentPassword('');
       setNewPassword('');
@@ -452,7 +465,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     ) : (
                       <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
                     )}
-                    <span>{profileMessage.text}</span>
+                    <span>{safeRenderText(profileMessage.text)}</span>
                   </div>
                 )}
 

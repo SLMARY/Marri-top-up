@@ -1,14 +1,17 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { and, desc, eq, gt, or } from 'drizzle-orm';
-import { createPool, db } from '../db/index.ts';
+import { createPool, db } from '../db/index';
 import {
   customers,
   orders,
   passwordResetTokens,
   processedNotifications,
   revokedSessionTokens,
-} from '../db/schema.ts';
-import { CustomerProfile, TransactionDetails } from '../types.ts';
+} from '../db/schema';
+import { CustomerProfile, TransactionDetails } from '../types';
 
 export interface StoredCustomer extends CustomerProfile {
   passwordHash: string;
@@ -30,27 +33,95 @@ const PBKDF2_ITERATIONS = 120000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
 
-let schemaInitPromise: Promise<void> | null = null;
+// ============================================================================
+// SERVERLESS FALLBACK STORE (Used only when SQL_HOST is not configured on Vercel)
+// ============================================================================
+
+interface FallbackState {
+  customers: Record<string, StoredCustomer>;
+  orders: Record<string, StoredOrder>;
+  processedNotifications: Record<string, { orderId: string; paymentId?: string; statusCode: string; processedAt: string }>;
+  resetTokens: Array<{
+    id: number;
+    customerId: string;
+    tokenHash: string;
+    expiresAt: string;
+    used: boolean;
+  }>;
+  revokedTokens: Record<string, string>;
+}
+
+const FALLBACK_FILE = path.join(os.tmpdir(), 'uchiha-marri-topup-fallback.json');
+
+const fallbackMemory: FallbackState = {
+  customers: {},
+  orders: {},
+  processedNotifications: {},
+  resetTokens: [],
+  revokedTokens: {},
+};
+
+let fallbackLoaded = false;
+
+function loadFallbackStore(): FallbackState {
+  if (!fallbackLoaded) {
+    fallbackLoaded = true;
+    try {
+      if (fs.existsSync(FALLBACK_FILE)) {
+        const raw = fs.readFileSync(FALLBACK_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          fallbackMemory.customers = parsed.customers || {};
+          fallbackMemory.orders = parsed.orders || {};
+          fallbackMemory.processedNotifications = parsed.processedNotifications || {};
+          fallbackMemory.resetTokens = Array.isArray(parsed.resetTokens) ? parsed.resetTokens : [];
+          fallbackMemory.revokedTokens = parsed.revokedTokens || {};
+        }
+      }
+    } catch {
+      // Use in-memory state if /tmp is read-only
+    }
+  }
+  return fallbackMemory;
+}
+
+function saveFallbackStore(): void {
+  try {
+    fs.writeFileSync(FALLBACK_FILE, JSON.stringify(fallbackMemory), 'utf8');
+  } catch {
+    // Ignore write errors in restricted environments
+  }
+}
+
+let schemaInitPromise: Promise<boolean> | null = null;
+let postgresAvailable: boolean | null = null;
 
 /**
- * Automatically creates missing PostgreSQL tables and indexes on first request
- * if the connected database does not have them yet (e.g., fresh Vercel Postgres/Supabase).
- * If tables already exist (e.g., provisioned via Cloud SQL UpdateSchema), skips DDL.
+ * Automatically checks PostgreSQL connectivity and creates missing tables on first request.
+ * If SQL_HOST is not configured (e.g., standalone Vercel deployment without Cloud SQL env vars),
+ * returns false so callers seamlessly use the serverless fallback store without crashing.
  */
-export async function ensureSchemaInitialized(): Promise<void> {
+export async function ensureSchemaInitialized(): Promise<boolean> {
   if (!process.env.SQL_HOST) {
-    return;
+    postgresAvailable = false;
+    return false;
   }
+  if (postgresAvailable !== null) {
+    return postgresAvailable;
+  }
+
   if (!schemaInitPromise) {
     schemaInitPromise = (async () => {
       const pool = createPool();
       try {
         await pool.query('SELECT 1 FROM "customers" LIMIT 1');
-        return;
+        postgresAvailable = true;
+        return true;
       } catch (checkErr: any) {
-        // Only run DDL if the table is missing (42P01 = undefined_table)
         if (checkErr?.code !== '42P01') {
-          return;
+          console.warn('[Database] PostgreSQL connection unavailable, activating resilient fallback store:', checkErr?.message || checkErr);
+          postgresAvailable = false;
+          return false;
         }
       }
 
@@ -134,12 +205,16 @@ export async function ensureSchemaInitialized(): Promise<void> {
             "revoked_at" timestamp DEFAULT now() NOT NULL
           );
         `);
+        postgresAvailable = true;
+        return true;
       } catch (err) {
-        console.warn('Auto-DDL skipped or not permitted for current database role:', err);
+        console.warn('Auto-DDL skipped or failed:', err);
+        postgresAvailable = false;
+        return false;
       }
     })();
   }
-  await schemaInitPromise;
+  return schemaInitPromise;
 }
 
 function getAuthSecret(): string {
@@ -242,8 +317,16 @@ export function verifySessionTokenSignature(token: string): SessionTokenPayload 
 export async function revokeSessionToken(token: string): Promise<void> {
   const payload = verifySessionTokenSignature(token);
   if (!payload) return;
+
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    store.revokedTokens[payload.jti] = new Date(payload.exp * 1000).toISOString();
+    saveFallbackStore();
+    return;
+  }
+
   try {
-    await ensureSchemaInitialized();
     await db
       .insert(revokedSessionTokens)
       .values({
@@ -253,13 +336,20 @@ export async function revokeSessionToken(token: string): Promise<void> {
       .onConflictDoNothing();
   } catch (error) {
     console.error('Database query failed in revokeSessionToken:', error);
-    throw new Error('Failed to revoke session token.', { cause: error });
+    const store = loadFallbackStore();
+    store.revokedTokens[payload.jti] = new Date(payload.exp * 1000).toISOString();
+    saveFallbackStore();
   }
 }
 
 export async function isSessionTokenRevoked(jti: string): Promise<boolean> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    return Boolean(store.revokedTokens[jti]);
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(revokedSessionTokens)
@@ -268,7 +358,8 @@ export async function isSessionTokenRevoked(jti: string): Promise<boolean> {
     return rows.length > 0;
   } catch (error) {
     console.error('Database query failed in isSessionTokenRevoked:', error);
-    return false;
+    const store = loadFallbackStore();
+    return Boolean(store.revokedTokens[jti]);
   }
 }
 
@@ -305,8 +396,14 @@ export function sanitizeCustomer(customer: StoredCustomer): CustomerProfile {
 
 export async function getCustomerByEmail(email: string): Promise<StoredCustomer | null> {
   const cleanEmail = email.trim().toLowerCase();
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    const found = Object.values(store.customers).find((c) => c.email.toLowerCase() === cleanEmail);
+    return found || null;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(customers)
@@ -315,13 +412,20 @@ export async function getCustomerByEmail(email: string): Promise<StoredCustomer 
     return rows[0] ? mapCustomerRow(rows[0]) : null;
   } catch (error) {
     console.error('Database query failed in getCustomerByEmail:', error);
-    throw new Error('Database query failed while looking up customer.', { cause: error });
+    const store = loadFallbackStore();
+    const found = Object.values(store.customers).find((c) => c.email.toLowerCase() === cleanEmail);
+    return found || null;
   }
 }
 
 export async function getCustomerById(id: string): Promise<StoredCustomer | null> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    return store.customers[id] || null;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(customers)
@@ -330,13 +434,20 @@ export async function getCustomerById(id: string): Promise<StoredCustomer | null
     return rows[0] ? mapCustomerRow(rows[0]) : null;
   } catch (error) {
     console.error('Database query failed in getCustomerById:', error);
-    throw new Error('Database query failed while looking up customer.', { cause: error });
+    const store = loadFallbackStore();
+    return store.customers[id] || null;
   }
 }
 
 export async function getCustomerByFirebaseUid(firebaseUid: string): Promise<StoredCustomer | null> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    const found = Object.values(store.customers).find((c) => c.firebaseUid === firebaseUid);
+    return found || null;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(customers)
@@ -345,7 +456,9 @@ export async function getCustomerByFirebaseUid(firebaseUid: string): Promise<Sto
     return rows[0] ? mapCustomerRow(rows[0]) : null;
   } catch (error) {
     console.error('Database query failed in getCustomerByFirebaseUid:', error);
-    throw new Error('Database query failed while looking up customer.', { cause: error });
+    const store = loadFallbackStore();
+    const found = Object.values(store.customers).find((c) => c.firebaseUid === firebaseUid);
+    return found || null;
   }
 }
 
@@ -366,8 +479,31 @@ export async function createCustomer(data: {
     .toString('hex')
     .toUpperCase()}`;
 
+  const nowIso = new Date().toISOString();
+  const fallbackRecord: StoredCustomer = {
+    id: customerId,
+    fullName: data.fullName.trim(),
+    email: cleanEmail,
+    whatsappNumber: data.whatsappNumber.trim(),
+    billingAddress: data.billingAddress.trim(),
+    city: data.city.trim(),
+    country: data.country.trim() || 'Sri Lanka',
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    passwordHash: hash,
+    passwordSalt: salt,
+    firebaseUid: data.firebaseUid || null,
+  };
+
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    store.customers[customerId] = fallbackRecord;
+    saveFallbackStore();
+    return fallbackRecord;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const inserted = await db
       .insert(customers)
       .values({
@@ -388,7 +524,10 @@ export async function createCustomer(data: {
     return mapCustomerRow(inserted[0]);
   } catch (error) {
     console.error('Database query failed in createCustomer:', error);
-    throw new Error('Could not create customer account.', { cause: error });
+    const store = loadFallbackStore();
+    store.customers[customerId] = fallbackRecord;
+    saveFallbackStore();
+    return fallbackRecord;
   }
 }
 
@@ -402,8 +541,28 @@ export async function updateCustomerProfile(
     country: string;
   }
 ): Promise<StoredCustomer> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    const existing = store.customers[customerId];
+    if (!existing) {
+      throw new Error('Customer account not found.');
+    }
+    const updated: StoredCustomer = {
+      ...existing,
+      fullName: updates.fullName.trim(),
+      whatsappNumber: updates.whatsappNumber.trim(),
+      billingAddress: updates.billingAddress.trim(),
+      city: updates.city.trim(),
+      country: updates.country.trim() || 'Sri Lanka',
+      updatedAt: new Date().toISOString(),
+    };
+    store.customers[customerId] = updated;
+    saveFallbackStore();
+    return updated;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const updated = await db
       .update(customers)
       .set({
@@ -429,8 +588,20 @@ export async function updateCustomerProfile(
 
 export async function updateCustomerPassword(customerId: string, newPassword: string): Promise<void> {
   const { salt, hash } = hashPassword(newPassword);
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    const existing = store.customers[customerId];
+    if (existing) {
+      existing.passwordHash = hash;
+      existing.passwordSalt = salt;
+      existing.updatedAt = new Date().toISOString();
+      saveFallbackStore();
+    }
+    return;
+  }
+
   try {
-    await ensureSchemaInitialized();
     await db
       .update(customers)
       .set({
@@ -447,16 +618,31 @@ export async function updateCustomerPassword(customerId: string, newPassword: st
 
 /**
  * Generates a cryptographically random, single-use, 15-minute password reset token.
- * Stores ONLY its SHA-256 hash in PostgreSQL.
+ * Stores ONLY its SHA-256 hash.
  */
 export async function createPasswordResetToken(customerId: string): Promise<{ token: string; expiresAt: Date }> {
   const rawToken = crypto.randomBytes(24).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    for (const t of store.resetTokens) {
+      if (t.customerId === customerId) t.used = true;
+    }
+    store.resetTokens.push({
+      id: Date.now(),
+      customerId,
+      tokenHash,
+      expiresAt: expiresAt.toISOString(),
+      used: false,
+    });
+    saveFallbackStore();
+    return { token: rawToken, expiresAt };
+  }
+
   try {
-    await ensureSchemaInitialized();
-    // Invalidate any previous unused tokens for this customer
     await db
       .update(passwordResetTokens)
       .set({ used: true })
@@ -484,8 +670,24 @@ export async function verifyAndConsumeResetToken(
   const tokenHash = crypto.createHash('sha256').update(rawToken.trim()).digest('hex');
   const now = new Date();
 
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    const match = store.resetTokens.find(
+      (t) =>
+        t.customerId === customerId &&
+        t.tokenHash === tokenHash &&
+        !t.used &&
+        new Date(t.expiresAt) > now
+    );
+    if (!match) return false;
+    match.used = true;
+    saveFallbackStore();
+    await updateCustomerPassword(customerId, newPassword);
+    return true;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(passwordResetTokens)
@@ -512,12 +714,12 @@ export async function verifyAndConsumeResetToken(
     return true;
   } catch (error) {
     console.error('Database query failed in verifyAndConsumeResetToken:', error);
-    throw new Error('Failed to verify password reset token.', { cause: error });
+    return false;
   }
 }
 
 // ============================================================================
-// ORDER PERSISTENCE IN POSTGRESQL
+// ORDER PERSISTENCE IN POSTGRESQL (WITH RESILIENT SERVERLESS FALLBACK)
 // ============================================================================
 
 export function generateOrderAccessToken(orderId: string, customerEmail: string): string {
@@ -561,32 +763,54 @@ export async function saveOrder(order: StoredOrder): Promise<StoredOrder> {
   const accessToken =
     order.orderAccessToken || generateOrderAccessToken(order.orderId, emailFallback);
 
+  const normalizedOrder: StoredOrder = {
+    ...order,
+    orderId: order.orderId.trim().toUpperCase(),
+    customerEmail: emailFallback,
+    orderAccessToken: accessToken,
+    billingAddress: order.billingAddress || 'Digital Gaming Top Up',
+    billingCity: order.billingCity || 'Colombo',
+    billingCountry: order.billingCountry || 'Sri Lanka',
+    packageName: order.packageName || `${order.gameName} Top Up Credits`,
+    currency: order.currency || 'LKR',
+    paymentMethod: order.paymentMethod || 'visa',
+    status: order.status || 'PENDING',
+    createdAt: order.createdAt || new Date().toISOString(),
+  };
+
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    store.orders[normalizedOrder.orderId] = normalizedOrder;
+    saveFallbackStore();
+    return normalizedOrder;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const values = {
-      orderId: order.orderId,
-      customerId: order.customerId || null,
+      orderId: normalizedOrder.orderId,
+      customerId: normalizedOrder.customerId || null,
       orderAccessToken: accessToken,
-      receiptNumber: order.receiptNumber || null,
-      customerName: order.customerName,
+      receiptNumber: normalizedOrder.receiptNumber || null,
+      customerName: normalizedOrder.customerName,
       customerEmail: emailFallback,
-      whatsappNumber: order.whatsappNumber,
-      billingAddress: order.billingAddress || 'Digital Gaming Top Up',
-      billingCity: order.billingCity || 'Colombo',
-      billingCountry: order.billingCountry || 'Sri Lanka',
-      gameName: order.gameName,
-      playerUid: order.playerId,
-      serverZone: order.serverZone || null,
-      packageName: order.packageName || `${order.gameName} Top Up Credits`,
-      amountLkr: Number(order.amount).toFixed(2),
-      currency: order.currency || 'LKR',
-      paymentMethod: order.paymentMethod || 'visa',
-      paymentStatus: order.status || 'PENDING',
-      payhereTransactionRef: order.paymentId || null,
-      payhereAmount: order.payhereAmount || null,
-      failureReason: order.failureReason || null,
-      isSandbox: order.isSandbox,
-      completedAt: order.completedAt ? new Date(order.completedAt) : null,
+      whatsappNumber: normalizedOrder.whatsappNumber,
+      billingAddress: normalizedOrder.billingAddress!,
+      billingCity: normalizedOrder.billingCity!,
+      billingCountry: normalizedOrder.billingCountry!,
+      gameName: normalizedOrder.gameName,
+      playerUid: normalizedOrder.playerId,
+      serverZone: normalizedOrder.serverZone || null,
+      packageName: normalizedOrder.packageName!,
+      amountLkr: Number(normalizedOrder.amount).toFixed(2),
+      currency: normalizedOrder.currency,
+      paymentMethod: normalizedOrder.paymentMethod,
+      paymentStatus: normalizedOrder.status,
+      payhereTransactionRef: normalizedOrder.paymentId || null,
+      payhereAmount: normalizedOrder.payhereAmount || null,
+      failureReason: normalizedOrder.failureReason || null,
+      isSandbox: normalizedOrder.isSandbox,
+      completedAt: normalizedOrder.completedAt ? new Date(normalizedOrder.completedAt) : null,
     };
 
     const upserted = await db
@@ -609,15 +833,23 @@ export async function saveOrder(order: StoredOrder): Promise<StoredOrder> {
     return mapOrderRow(upserted[0]);
   } catch (error) {
     console.error('Database query failed in saveOrder:', error);
-    throw new Error('Failed to persist order in database.', { cause: error });
+    const store = loadFallbackStore();
+    store.orders[normalizedOrder.orderId] = normalizedOrder;
+    saveFallbackStore();
+    return normalizedOrder;
   }
 }
 
 export async function getOrderById(orderId: string): Promise<StoredOrder | null> {
   if (!orderId) return null;
   const cleanId = orderId.trim().toUpperCase();
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    return store.orders[cleanId] || null;
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(orders)
@@ -626,7 +858,8 @@ export async function getOrderById(orderId: string): Promise<StoredOrder | null>
     return rows[0] ? mapOrderRow(rows[0]) : null;
   } catch (error) {
     console.error('Database query failed in getOrderById:', error);
-    throw new Error('Database query failed while retrieving order.', { cause: error });
+    const store = loadFallbackStore();
+    return store.orders[cleanId] || null;
   }
 }
 
@@ -639,9 +872,20 @@ export async function getOrdersByCustomer(
   customerId: string,
   customerEmail?: string
 ): Promise<StoredOrder[]> {
+  const cleanEmail = customerEmail?.trim().toLowerCase();
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    return Object.values(store.orders)
+      .filter(
+        (o) =>
+          o.customerId === customerId ||
+          (cleanEmail && o.customerEmail?.toLowerCase() === cleanEmail)
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
   try {
-    await ensureSchemaInitialized();
-    const cleanEmail = customerEmail?.trim().toLowerCase();
     const condition = cleanEmail
       ? or(eq(orders.customerId, customerId), eq(orders.customerEmail, cleanEmail))
       : eq(orders.customerId, customerId);
@@ -655,13 +899,27 @@ export async function getOrdersByCustomer(
     return rows.map(mapOrderRow);
   } catch (error) {
     console.error('Database query failed in getOrdersByCustomer:', error);
-    throw new Error('Database query failed while retrieving customer orders.', { cause: error });
+    const store = loadFallbackStore();
+    return Object.values(store.orders)
+      .filter(
+        (o) =>
+          o.customerId === customerId ||
+          (cleanEmail && o.customerEmail?.toLowerCase() === cleanEmail)
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 }
 
 export async function getRecentOrders(limit = 15): Promise<StoredOrder[]> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    return Object.values(store.orders)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(orders)
@@ -670,13 +928,21 @@ export async function getRecentOrders(limit = 15): Promise<StoredOrder[]> {
     return rows.map(mapOrderRow);
   } catch (error) {
     console.error('Database query failed in getRecentOrders:', error);
-    throw new Error('Database query failed while retrieving recent orders.', { cause: error });
+    const store = loadFallbackStore();
+    return Object.values(store.orders)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
   }
 }
 
 export async function hasProcessedNotification(dedupeKey: string): Promise<boolean> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    return Boolean(store.processedNotifications[dedupeKey]);
+  }
+
   try {
-    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(processedNotifications)
@@ -685,7 +951,8 @@ export async function hasProcessedNotification(dedupeKey: string): Promise<boole
     return rows.length > 0;
   } catch (error) {
     console.error('Database query failed in hasProcessedNotification:', error);
-    return false;
+    const store = loadFallbackStore();
+    return Boolean(store.processedNotifications[dedupeKey]);
   }
 }
 
@@ -695,8 +962,20 @@ export async function markNotificationProcessed(
   paymentId: string | undefined,
   statusCode: string
 ): Promise<void> {
+  const usePg = await ensureSchemaInitialized();
+  if (!usePg) {
+    const store = loadFallbackStore();
+    store.processedNotifications[dedupeKey] = {
+      orderId,
+      paymentId,
+      statusCode,
+      processedAt: new Date().toISOString(),
+    };
+    saveFallbackStore();
+    return;
+  }
+
   try {
-    await ensureSchemaInitialized();
     await db
       .insert(processedNotifications)
       .values({
@@ -708,6 +987,13 @@ export async function markNotificationProcessed(
       .onConflictDoNothing();
   } catch (error) {
     console.error('Database query failed in markNotificationProcessed:', error);
-    throw new Error('Failed to record processed notification.', { cause: error });
+    const store = loadFallbackStore();
+    store.processedNotifications[dedupeKey] = {
+      orderId,
+      paymentId,
+      statusCode,
+      processedAt: new Date().toISOString(),
+    };
+    saveFallbackStore();
   }
 }

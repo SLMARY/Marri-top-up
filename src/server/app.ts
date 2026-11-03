@@ -2,8 +2,6 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { adminAuth } from '../lib/firebase-admin.ts';
-import { getOrCreateUser } from '../db/users.ts';
 import {
   StoredCustomer,
   StoredOrder,
@@ -30,7 +28,7 @@ import {
   getRecentOrders,
   hasProcessedNotification,
   markNotificationProcessed,
-} from './database.ts';
+} from './database';
 
 dotenv.config();
 
@@ -315,12 +313,14 @@ async function getAuthenticatedCustomerFromRequest(req: Request): Promise<Stored
     return await getCustomerById(payload.sub);
   }
 
-  // 2. Check Firebase Auth ID token
+  // 2. Optional fallback check for Firebase Auth ID token (lazy-loaded so Vercel serverless never fails at boot)
   try {
+    const { adminAuth } = await import('../lib/firebase-admin');
+    const { getOrCreateUser } = await import('../db/users');
     const decoded = await adminAuth.verifyIdToken(token);
     if (decoded && decoded.uid) {
       const email = (decoded.email || `${decoded.uid}@firebase.user`).toLowerCase();
-      await getOrCreateUser(decoded.uid, email);
+      await getOrCreateUser(decoded.uid, email).catch(() => null);
 
       let customer = await getCustomerByFirebaseUid(decoded.uid);
       if (!customer && decoded.email) {
@@ -341,7 +341,7 @@ async function getAuthenticatedCustomerFromRequest(req: Request): Promise<Stored
       return customer;
     }
   } catch {
-    // Not a valid Firebase ID token
+    // Not a valid Firebase ID token or Firebase Admin not configured
   }
 
   return null;
@@ -1758,3 +1758,21 @@ app.get('/api/transactions', async (_req: Request, res: Response) => {
     return res.json([]);
   }
 });
+
+// Global Express Error Handler — guarantees error responses are always strings, never { code, message } objects
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[Express Unhandled Error]:', err?.message || err);
+  const status = typeof err?.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+  const errorMsg =
+    typeof err === 'string'
+      ? err
+      : err && typeof err.message === 'string' && err.message.trim()
+      ? err.message.trim()
+      : 'An unexpected server error occurred. Please try again.';
+
+  res.status(status).json({
+    success: false,
+    error: errorMsg,
+  });
+});
+

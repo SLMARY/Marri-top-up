@@ -16,6 +16,7 @@ import {
 import { ReceiptPreviewCard } from '../components/ReceiptPreviewCard';
 import { ReceiptData, TransactionDetails } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { extractErrorMessage, safeRenderText } from '../utils/errorUtils';
 
 interface ReceiptPageProps {
   businessWhatsApp?: string;
@@ -82,16 +83,19 @@ export const ReceiptPage: React.FC<ReceiptPageProps> = ({
         // non-json response
       }
 
-      if (!res.ok || !data) {
+      if (!res.ok || !data || data.error) {
         throw new Error(
-          data?.error || data?.failureReason || 'Order not found or you are not authorized to access this receipt.'
+          extractErrorMessage(
+            data?.error ?? data?.failureReason ?? data,
+            'Order not found or you are not authorized to access this receipt.'
+          )
         );
       }
 
       setTransaction(data);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to load transaction:', err);
-      setError(err.message || 'Unable to retrieve order details.');
+      setError(extractErrorMessage(err, 'Unable to retrieve order details.'));
       setTransaction(null);
     } finally {
       setLoading(false);
@@ -244,7 +248,7 @@ export const ReceiptPage: React.FC<ReceiptPageProps> = ({
             {error && (
               <div className="flex items-center gap-2 rounded-xl bg-red-950/60 border border-red-500/40 p-3 text-xs text-red-300 text-left">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
+                <span>{safeRenderText(error)}</span>
               </div>
             )}
 
@@ -317,8 +321,10 @@ export const ReceiptPage: React.FC<ReceiptPageProps> = ({
                   PAYMENT CANCELLED
                 </h1>
                 <p className="text-xs sm:text-sm text-zinc-300 max-w-xl mx-auto">
-                  {transaction.failureReason ||
-                    'Your payment checkout was cancelled before completion on PayHere.'}
+                  {safeRenderText(
+                    transaction.failureReason,
+                    'Your payment checkout was cancelled before completion on PayHere.'
+                  )}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <Link
@@ -344,8 +350,10 @@ export const ReceiptPage: React.FC<ReceiptPageProps> = ({
                   PAYMENT FAILED
                 </h1>
                 <p className="text-xs sm:text-sm text-zinc-300 max-w-xl mx-auto">
-                  {transaction.failureReason ||
-                    'Your payment transaction was declined by the bank or failed on PayHere checkout.'}
+                  {safeRenderText(
+                    transaction.failureReason,
+                    'Your payment transaction was declined by the bank or failed on PayHere checkout.'
+                  )}
                 </p>
                 <div className="pt-2">
                   <Link
