@@ -1,0 +1,6 @@
+{
+  "name": "Uchiha Marri Top Up",
+  "description": "Premium gaming top-up payment platform in Sri Lanka. Fast, safe, and easy LKR game top-ups with Visa and Mastercard payments via PayHere.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

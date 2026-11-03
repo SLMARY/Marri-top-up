@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="refresh" content="0; url=/?status=failed" />
+    <title>Payment Failed - Uchiha Marri Top Up</title>
+    <script>
+      const params = window.location.search;
+      window.location.replace('/?status=failed' + (params ? '&' + params.substring(1) : ''));
+    </script>
+  </head>
+  <body style="background:#08080a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
+    <p>Redirecting to Payment Failure Status...</p>
+  </body>
+</html>

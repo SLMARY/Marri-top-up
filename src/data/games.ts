@@ -1,0 +1,85 @@
+import { GameOption } from '../types';
+
+export const SUPPORTED_GAMES: GameOption[] = [
+  {
+    id: 'free_fire',
+    name: 'Free Fire',
+    category: 'Battle Royale',
+    placeholderUid: 'e.g. 2891048291',
+    popular: true,
+  },
+  {
+    id: 'pubg_mobile',
+    name: 'PUBG Mobile',
+    category: 'Battle Royale',
+    placeholderUid: 'e.g. 5192847102',
+    popular: true,
+    unavailable: true,
+  },
+  {
+    id: 'mobile_legends',
+    name: 'Mobile Legends: Bang Bang',
+    category: 'MOBA',
+    hasZoneId: true,
+    zoneLabel: 'Zone ID (4-5 digits)',
+    placeholderUid: 'e.g. 984102914',
+    popular: true,
+  },
+  {
+    id: 'bloodstrike',
+    name: 'Blood Strike',
+    category: 'FPS',
+    placeholderUid: 'e.g. 1092847192',
+    popular: true,
+  },
+  {
+    id: 'genshin_impact',
+    name: 'Genshin Impact',
+    category: 'RPG',
+    hasZoneId: true,
+    zoneLabel: 'Server (Asia, America, Europe)',
+    placeholderUid: 'e.g. 819284019',
+    popular: true,
+    unavailable: true,
+  },
+  {
+    id: 'valorant',
+    name: 'Valorant',
+    category: 'Tactical Shooter',
+    placeholderUid: 'Riot ID#Tag (e.g. Shadow#LK1)',
+    popular: true,
+    unavailable: true,
+  },
+  {
+    id: 'honor_of_kings',
+    name: 'Honor of Kings',
+    category: 'MOBA',
+    placeholderUid: 'e.g. 883910294',
+    popular: false,
+    unavailable: true,
+  },
+  {
+    id: 'clash_of_clans',
+    name: 'Clash of Clans',
+    category: 'Strategy',
+    placeholderUid: 'Player Tag (e.g. #9QY82PL)',
+    popular: false,
+    unavailable: true,
+  },
+  {
+    id: 'custom_game',
+    name: 'Other / Custom Game',
+    category: 'Custom',
+    placeholderUid: 'Enter your In-Game ID / UID',
+    popular: false,
+  },
+];
+
+export const QUICK_AMOUNTS = [
+  { amount: 500, label: 'Rs. 500' },
+  { amount: 1000, label: 'Rs. 1,000' },
+  { amount: 1500, label: 'Rs. 1,500' },
+  { amount: 2500, label: 'Rs. 2,500', popular: true },
+  { amount: 5000, label: 'Rs. 5,000' },
+  { amount: 10000, label: 'Rs. 10,000' },
+];
