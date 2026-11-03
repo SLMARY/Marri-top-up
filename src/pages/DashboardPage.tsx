@@ -38,7 +38,7 @@ interface DashboardPageProps {
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   businessWhatsApp = '0742235836',
 }) => {
-  const { customer, token, logout, updateProfile } = useAuth();
+  const { customer, token, isLoading, logout, updateProfile } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -64,16 +64,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
+    if (isLoading) return;
     if (!customer) {
       navigate('/login');
       return;
     }
-    setFullName(customer.fullName);
-    setWhatsappNumber(customer.whatsappNumber);
-    setBillingAddress(customer.billingAddress);
-    setCity(customer.city);
+    setFullName(customer.fullName || '');
+    setWhatsappNumber(customer.whatsappNumber || '');
+    setBillingAddress(customer.billingAddress || '');
+    setCity(customer.city || '');
     setCountry(customer.country || 'Sri Lanka');
-  }, [customer, navigate]);
+  }, [customer, isLoading, navigate]);
 
   const fetchCustomerOrders = useCallback(async () => {
     if (!token) return;
@@ -87,10 +88,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       });
       const data = await res.json().catch(() => null);
       if (res.ok && data?.success) {
-        setOrders(data.orders || []);
+        const loadedOrders: TransactionDetails[] = Array.isArray(data.orders) ? data.orders : [];
+        setOrders(loadedOrders);
         setSummary(data.summary || { total: 0, successful: 0, pending: 0, failed: 0 });
-        if (!selectedOrder && data.orders?.length > 0) {
-          setSelectedOrder(data.orders[0]);
+        if (loadedOrders.length > 0) {
+          setSelectedOrder((prev) => prev || loadedOrders[0]);
         }
       }
     } catch (err) {
@@ -98,11 +100,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     } finally {
       setLoadingOrders(false);
     }
-  }, [token, selectedOrder]);
+  }, [token]);
 
   useEffect(() => {
-    fetchCustomerOrders();
-  }, [fetchCustomerOrders]);
+    if (!isLoading && token) {
+      fetchCustomerOrders();
+    }
+  }, [isLoading, token, fetchCustomerOrders]);
 
   const handleTabChange = (tab: DashboardTab) => {
     setActiveTab(tab);
@@ -141,6 +145,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     await logout();
     navigate('/');
   };
+
+  if (isLoading) {
+    return (
+      <div className="py-24 bg-[#08080a] min-h-[85vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-red-500" />
+        <p className="text-xs font-semibold text-zinc-400">Verifying your customer session...</p>
+      </div>
+    );
+  }
 
   if (!customer) {
     return null;

@@ -1,79 +1,95 @@
-# Implementation Plan: PayHere Sandbox Integration & Customer Checkout Update
+# UCHIHA MARRI TOP UP — Complete Website Error Fix & Stability Audit
 
-## 1. Overview
-Update the existing **UCHIHA MARRI TOP UP** application to collect full customer and billing details during checkout, integrate the official PayHere Sandbox Checkout API with strict server-side MD5 hash generation and IPN notification verification, and provide receipt download and manual WhatsApp receipt sharing (`0742235836`) without altering existing designs, games, packages, or prices.
+This plan resolves the login and sign-up crashes, stabilizes database connectivity across Google AI Studio and Vercel deployments, adds automatic database table initialization on first request, introduces React error boundaries, and hardens PayHere checkout and customer data isolation while preserving the existing UCHIHA MARRI TOP UP visual design and game catalogs.
+
+## User Review & Critical Decisions
+
+> [!IMPORTANT]
+> **Confirmed & Defaulted Decisions from Phase 1:**
+> - **Confirmed Decision — Automatic Table Initialization**: The backend will automatically ensure all required database tables and indexes (`customers`, `orders`, `processed_notifications`, `password_reset_tokens`, and `revoked_session_tokens`) exist before executing queries on a fresh deployment.
+> - **Defaulted Decision — Multi-Environment Database Compatibility**: The database layer will support both AI Studio's Cloud SQL PostgreSQL connection variables and external Supabase PostgreSQL connection settings on Vercel, with clear diagnostic error reporting if environment variables are missing.
+> - **Defaulted Decision — Identity Verification for Password Reset**: Customers can reset a forgotten password by verifying ownership of both their registered email address and their registered WhatsApp number (or using a single-use cryptographic reset token), without ever exposing reset codes in public API responses.
 
 ---
 
-## 2. Planned Changes by File
+## 1. Overview & Core Concept
 
-### A. Environment Configuration (`/.env.example`)
-- Document the required server-side PayHere environment variables without hardcoding any private credentials:
-  - `PAYHERE_MERCHANT_ID`
-  - `PAYHERE_MERCHANT_SECRET`
-  - `PAYHERE_SANDBOX="true"`
-  - `BUSINESS_WHATSAPP="0742235836"`
+- **What It Does**: Eliminates client-side and serverless runtime crashes during registration, login, and dashboard navigation, guarantees persistent PostgreSQL storage for accounts and orders, and secures the end-to-end PayHere Sandbox and Production payment lifecycle.
+- **Target Audience / Persona**: Sri Lankan gamers purchasing Garena Free Fire memberships/diamonds, Mobile Legends: Bang Bang diamonds, and Blood Strike passes/gold in LKR via Visa and Mastercard.
+- **Key Value**: Customers register once, log in reliably without page crashes or infinite render loops, have their saved billing details automatically populated at checkout, and track only their own verified orders and downloadable PDF/PNG receipts.
 
-### B. Shared TypeScript Types (`/src/types.ts`)
-- Extend `PaymentInitiationPayload` and `ReceiptData` to include:
-  - `customerEmail: string`
-  - `billingAddress: string`
-  - `billingCity: string`
-  - `billingCountry: string`
-- Ensure payment status types explicitly cover `SUCCESSFUL`, `PENDING`, `FAILED`, and `CANCELLED`.
+---
 
-### C. Checkout Form (`/src/components/PaymentForm.tsx`)
-- **Customer & Billing Information (Section 01)**:
-  - Keep existing **Customer Full Name** (`customerName`) and **WhatsApp Number** (`whatsappNumber`) inputs.
-  - Add required inputs matching the existing dark/crimson aesthetic:
-    - **Email Address** (`customerEmail`)
-    - **Billing Address** (`billingAddress`)
-    - **Billing City** (`billingCity`)
-    - **Billing Country** (`billingCountry`, defaulting to `"Sri Lanka"`)
-- **Preserve Existing Checkout Controls**:
-  - Keep Game selection (`Free Fire`, `Mobile Legends`, `Blood Strike`), Player ID / UID (and Free Fire UID lookup), Server Zone ID (with MLBB 4–5 digit numeric validation), Package selection, Custom amount input, and Visa/Mastercard selection.
-- **Validation & Submission**:
-  - Validate Full Name, WhatsApp Number, Email Address (format check), Billing Address, Billing City, Billing Country, Game, Player UID, Zone ID (when required), and Package/Custom Amount before calling `POST /api/payhere/initiate`.
-  - Receive the signed `payhereData` payload and `checkoutUrl` (`https://sandbox.payhere.lk/pay/checkout` in Sandbox mode) and redirect the customer via a hidden auto-submitted POST form to PayHere Hosted Checkout. Never collect card numbers, CVV, or expiry dates on the site.
+## 2. User Experience & Visual Design
 
-### D. Secure PayHere Backend (`/src/server/app.ts`)
--Reuse the existing Express backend mounted via `/api/index.ts` and `vercel.json` (no duplicate endpoint files):
-  1. **`GET /api/payhere/config` & `POST /api/payhere/config`**:
-     - Read `PAYHERE_MERCHANT_ID`, `PAYHERE_MERCHANT_SECRET`, and `PAYHERE_SANDBOX` (`true` by default unless explicitly `"false"`).
-     - Remove hardcoded fallback secret strings so credentials come strictly from server environment variables or runtime configuration.
-     - Return configuration status (`configured`, `sandbox`, `checkoutUrl`) without exposing `PAYHERE_MERCHANT_SECRET`.
-  2. **`POST /api/payhere/initiate`**:
-     - Validate all required customer fields (`customerName`, `whatsappNumber`, `customerEmail`, `billingAddress`, `billingCity`, `billingCountry`), game details (`gameName`, `playerId`, `serverZoneId`), and package/custom amount against server-side package pricing.
-     - Generate a unique order ID (`UMT-<timestamp>-<random>`).
-     - Format amount to 2 decimal places (`amount.toFixed(2)`) and compute the official PayHere MD5 checkout hash on the server:
-       `UPPERCASE(MD5(merchant_id + order_id + amountFormatted + currency + UPPERCASE(MD5(merchant_secret))))`.
-     - Populate PayHere checkout fields (`first_name`, `last_name`, `email`, `phone`, `address`, `city`, `country`, `return_url`, `cancel_url`, `notify_url`, and custom fields) and save the transaction with initial status `PENDING`.
-  3. **`POST /api/payhere/notify`**:
-     - Verify `merchant_id` matches the configured `PAYHERE_MERCHANT_ID`.
-     - Verify the PayHere `md5sig` signature:
-       `UPPERCASE(MD5(merchant_id + order_id + payhere_amount + payhere_currency + status_code + UPPERCASE(MD5(merchant_secret))))`.
-     - Verify the order exists and that `Number(payhere_amount).toFixed(2) === Number(transaction.amount).toFixed(2)` and `payhere_currency === transaction.currency`.
-     - Prevent duplicate payment notifications: if the order is already marked `SUCCESSFUL`, log and return `200 OK` without re-processing.
-     - Map PayHere `status_code` values accurately:
-       - `2` → `SUCCESSFUL`
-       - `0` → `PENDING`
-       - `-1` → `CANCELLED`
-       - `-2` / `-3` → `FAILED`
-  4. **`GET /api/payhere/verify` & `GET /api/payhere/verify/:orderId` & `POST /api/payhere/verify`**:
-     - Support verifying an order via path parameter (`/api/payhere/verify/:orderId`), query parameter (`/api/payhere/verify?order_id=...`), or POST body.
-     - Never mark an order `SUCCESSFUL` merely because the user returned to `return_url`; return the authoritative server-side status (`SUCCESSFUL`, `PENDING`, `FAILED`, or `CANCELLED`).
+- **Key User Flows**:
+  1. **Resilient Registration & Login**: Customers create an account or sign in with immediate field validation, clear loading indicators, network/server error recovery banners, and smooth redirection to the top-up checkout portal.
+  2. **1-Click Authenticated Checkout**: Logged-in customers automatically see their saved billing profile (Full Name, Email, WhatsApp Number, Billing Address, City, Country) pre-filled in Step 04, requiring only Game selection, Player UID (and Zone ID for MLBB), Package/Amount selection, and clicking **Pay Now**.
+  3. **Protected Customer Dashboard**: Customers view their profile, order summary counters, payment history tabs (**My Orders**, **Payment History**, **Successful**, **Pending**, **Failed**), and verified receipt downloads without render loops or premature redirects while session state loads.
+  4. **Global Error Boundary**: Any unexpected runtime exception in a view is caught by a styled recovery boundary that allows the customer to reload or return to the homepage rather than facing a blank screen.
+- **Visual Identity & Theme**:
+  - *Aesthetic Direction*: Preserves the established **UCHIHA MARRI TOP UP** dark gaming storefront aesthetic.
+  - *Color Palette & Mood*: Deep obsidian canvas (`#08080a` / `#101016`), subtle structural borders (`border-zinc-800`), crimson primary accents (`#dc2626` / `#e11d48`), and semantic verification badges (emerald for verified paid, amber for pending IPN, red for declined/cancelled).
+  - *Typography & Hierarchy*: Display headings paired with clean geometric body copy and `tabular-nums` monospace formatting for LKR prices, Player UIDs, and Order IDs.
+  - *Component Styling & Layout*: Responsive 1440px desktop container down to mobile viewports, keeping all existing game cards, membership tables, and policy pages intact.
 
-### E. Receipt & WhatsApp Confirmation (`/src/components/ReceiptPreviewCard.tsx`, `/src/pages/ReceiptPage.tsx`, `/src/components/SuccessView.tsx`)
-- Ensure the receipt view displays:
-  - **UCHIHA MARRI TOP UP**
-  - **Order ID**
-  - **Customer Name**
-  - **Game Name**
-  - **Player ID**
-  - **Package**
-  - **Payment Amount**
-  - **Payment Status** (`SUCCESSFUL`, `PENDING`, `FAILED`, `CANCELLED`)
-  - **Payment Date**
-- Include a **`DOWNLOAD RECEIPT`** button to download the official PDF receipt (while keeping PNG download available).
-- Include a **`SEND RECEIPT VIA WHATSAPP`** button that opens WhatsApp (`0742235836` / `94742235836`) with a pre-filled message containing all receipt details so the customer can manually send it (without claiming the WhatsApp message was automatically sent).
-- Accurately reflect `SUCCESSFUL`, `PENDING`, `FAILED`, and `CANCELLED` states on the return/verification screens so unverified redirects remain `PENDING` until PayHere's server notification confirms payment.
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Root-Cause Fix for Sign-Up & Login Crashes on Vercel & Browser**
+  - *Chosen Approach*:
+    1. Make Firebase Admin initialization resilient so that missing cloud credentials on external Vercel deployments never crash the Express serverless function at module load time.
+    2. Add a lazy, once-per-instance idempotent schema bootstrap (`CREATE TABLE IF NOT EXISTS ...`) so a newly connected PostgreSQL/Supabase database on Vercel never throws `relation "customers" does not exist` during the first registration or login request.
+    3. Fix the `useCallback` dependency loop in the Customer Dashboard (`selectedOrder` triggering repeated `/api/customer/orders` fetches) and wait for `AuthContext` `isLoading` to finish before redirecting unauthenticated visitors.
+    4. Wrap the React application in a top-level Error Boundary and harden all JSON/storage parsing in `AuthContext`.
+  - *Why*: Addresses both backend 500 crashes on serverless cold starts and frontend React state/render crashes.
+- **Decision 2: Strict Server-Side Price & Notification Verification**
+  - *Chosen Approach*: Validate every package ID and amount against the server's authoritative price catalog (Memberships, Free Fire Diamonds, MLBB Diamonds, and Blood Strike packages), generate PayHere MD5 hashes exclusively on the backend, and unlock receipts only after a verified PayHere server notification (`status_code = 2`).
+  - *Why*: Prevents browser devtools tampering, fake redirect URL parameters, and cross-customer receipt enumeration.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+### Architecture & Component Diagram
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                     CLIENT SPA (React 19 + Router + ErrorBoundary)         │
+│                                                                            │
+│  ┌──────────────────┐   ┌────────────────────┐   ┌──────────────────────┐  │
+│  │ SignUp & Login   │   │ Easy Checkout Form │   │ Customer Dashboard   │  │
+│  │ (Form Validation,│──▶│ (Auto-Filled Saved │──▶│ (Profile Editor,     │  │
+│  │  Safe Auth Flow) │   │  Billing Profile)  │   │  Orders & Receipts)  │  │
+│  └────────┬─────────┘   └─────────┬──────────┘   └──────────┬───────────┘  │
+└───────────┼───────────────────────┼─────────────────────────┼──────────────┘
+            │ Bearer Token / JSON   │ POST /api/payhere/*     │ Bearer Token
+            ▼                       ▼                         ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                 EXPRESS / VERCEL SERVERLESS API GATEWAY                    │
+│                                                                            │
+│  ┌──────────────────────┐  ┌────────────────────────┐  ┌────────────────┐  │
+│  │ Auth & Rate Limiter  │  │ PayHere Checkout & IPN │  │ Owner & Token  │  │
+│  │ (PBKDF2-SHA512,      │  │ Verifier (Server MD5,  │  │ Isolation      │  │
+│  │  JWT + Revocation)   │  │ Official Catalog Check)│  │ Guard (403)    │  │
+│  └──────────┬───────────┘  └───────────┬────────────┘  └────────┬───────┘  │
+│             └──────────────────────────┼────────────────────────┘          │
+│                                        ▼                                   │
+│             ┌──────────────────────────────────────────────────┐           │
+│             │ Auto-Initialized PostgreSQL Repository (Drizzle) │           │
+│             │ (customers, orders, processed_notifications,     │           │
+│             │  password_reset_tokens, revoked_session_tokens)  │           │
+│             └──────────────────────────────────────────────────┘           │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data Model & State
+- **Customers (`customers`)**: Stores `customer_id`, `full_name`, `email` (unique, lowercase), `whatsapp_number`, `billing_address`, `city`, `country`, `password_hash`, `password_salt`, and timestamps.
+- **Orders (`orders`)**: Stores `order_id`, `customer_id`, `order_access_token` (HMAC-SHA256), `receipt_number`, customer billing snapshot, `game_name`, `player_uid`, `server_zone`, `package_name`, `amount_lkr`, `currency`, `payment_method`, `payment_status` (`PENDING`, `SUCCESSFUL`, `FAILED`, `CANCELLED`), `payhere_transaction_ref`, and timestamps.
+- **Security Tables**: `processed_notifications` (idempotent IPN deduplication), `password_reset_tokens` (SHA-256 hashed single-use 15-minute tokens), and `revoked_session_tokens` (server-side logout invalidation).
+
+### Interactive Component & State Mapping
+- **SignUp & Login Views**: Validate inputs before network dispatch, handle non-JSON or 500/429 server responses gracefully without throwing unhandled promise rejections, store session state via `AuthContext`, and redirect to `/#payment-section`.
+- **Dashboard View**: Waits for `isLoading === false` before checking `!customer`, fetches `/api/customer/orders` without dependency loops, and allows inline profile updates and verified PDF/PNG receipt downloads.
+- **Checkout & Receipt Views**: Submits top-up payload to `/api/payhere/initiate`, stores `orderAccessToken` in `sessionStorage`, redirects to PayHere hosted checkout, and polls `/api/payhere/verify` with owner/token authorization on return.

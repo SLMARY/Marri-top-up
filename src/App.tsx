@@ -28,6 +28,7 @@ import { AuthProvider } from './context/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { SignUpPage } from './pages/SignUpPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Scroll to top on route change helper
 function ScrollToTop() {
@@ -154,133 +155,135 @@ export default function App() {
   };
 
   return (
-    <AuthProvider>
-      <div className="min-h-screen bg-[#08080a] text-zinc-100 flex flex-col font-sans selection:bg-red-600 selection:text-white">
-        <ScrollToTop />
+    <ErrorBoundary>
+      <AuthProvider>
+        <div className="min-h-screen bg-[#08080a] text-zinc-100 flex flex-col font-sans selection:bg-red-600 selection:text-white">
+          <ScrollToTop />
 
-        {/* Top Navigation Bar with Real URL Routing */}
-        <Navbar
-          onPayNowClick={scrollToPayment}
-          onOpenLookup={() => setIsLookupOpen(true)}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-        />
+          {/* Top Navigation Bar with Real URL Routing */}
+          <Navbar
+            onPayNowClick={scrollToPayment}
+            onOpenLookup={() => setIsLookupOpen(true)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+          />
 
-        {/* Main Content with Route Switching */}
-        <main className="flex-1">
-          <Routes>
-            {/* Main Top Up Portal Route */}
-            <Route
-              path="/"
-              element={
-                viewState === 'SUCCESS' && currentTransaction ? (
-                  <SuccessView
-                    transaction={currentTransaction}
-                    onNewTopUp={() => {
-                      setViewState('HOME');
-                      window.history.replaceState({}, '', '/');
-                    }}
-                    businessWhatsApp={config.businessWhatsApp}
-                  />
-                ) : viewState === 'FAILED' ? (
-                  <FailedView
-                    errorDetails={failedDetails}
-                    onTryAgain={handleTryAgain}
-                    businessWhatsApp={config.businessWhatsApp}
-                  />
-                ) : (
-                  <>
-                    {/* Hero Section */}
-                    <Hero
-                      onPayNowClick={scrollToPayment}
+          {/* Main Content with Route Switching */}
+          <main className="flex-1">
+            <Routes>
+              {/* Main Top Up Portal Route */}
+              <Route
+                path="/"
+                element={
+                  viewState === 'SUCCESS' && currentTransaction ? (
+                    <SuccessView
+                      transaction={currentTransaction}
+                      onNewTopUp={() => {
+                        setViewState('HOME');
+                        window.history.replaceState({}, '', '/');
+                      }}
                       businessWhatsApp={config.businessWhatsApp}
                     />
-
-                    {/* Official 2026 Membership Price List Section */}
-                    <MembershipPriceList onSelectMembership={handleSelectMembership} />
-
-                    {/* Payment Form Section */}
-                    <div ref={paymentFormRef} id="payment-section">
-                      <PaymentForm
-                        onPaymentSuccess={handlePaymentSuccess}
-                        onPaymentFailure={handlePaymentFailure}
-                        isSandboxMode={config.isSandbox}
-                        preselectedPackageId={selectedPackageId}
-                        preselectedAmount={selectedAmount}
-                        selectedGameId={selectedGameId}
-                        onSelectGameId={setSelectedGameId}
+                  ) : viewState === 'FAILED' ? (
+                    <FailedView
+                      errorDetails={failedDetails}
+                      onTryAgain={handleTryAgain}
+                      businessWhatsApp={config.businessWhatsApp}
+                    />
+                  ) : (
+                    <>
+                      {/* Hero Section */}
+                      <Hero
+                        onPayNowClick={scrollToPayment}
+                        businessWhatsApp={config.businessWhatsApp}
                       />
-                    </div>
 
-                    {/* Supported Games Catalog */}
-                    <GamesSection onSelectGame={handleGameSelect} />
-                  </>
-                )
-              }
-            />
+                      {/* Official 2026 Membership Price List Section */}
+                      <MembershipPriceList onSelectMembership={handleSelectMembership} />
 
-            {/* Customer Authentication & Account Dashboard Routes */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignUpPage />} />
-            <Route
-              path="/dashboard"
-              element={<DashboardPage businessWhatsApp={config.businessWhatsApp} />}
-            />
+                      {/* Payment Form Section */}
+                      <div ref={paymentFormRef} id="payment-section">
+                        <PaymentForm
+                          onPaymentSuccess={handlePaymentSuccess}
+                          onPaymentFailure={handlePaymentFailure}
+                          isSandboxMode={config.isSandbox}
+                          preselectedPackageId={selectedPackageId}
+                          preselectedAmount={selectedAmount}
+                          selectedGameId={selectedGameId}
+                          onSelectGameId={setSelectedGameId}
+                        />
+                      </div>
 
-            {/* 7 Required Legal Policy Pages */}
-            <Route path="/about-us" element={<AboutUs />} />
-            <Route path="/contact-us" element={<ContactUs />} />
-            <Route path="/terms-of-service" element={<TermsOfService />} />
-            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-            <Route path="/refund-policy" element={<RefundPolicy />} />
-            <Route path="/shipping-policy" element={<ShippingPolicy />} />
-            <Route path="/how-to-order" element={<HowToOrder />} />
+                      {/* Supported Games Catalog */}
+                      <GamesSection onSelectGame={handleGameSelect} />
+                    </>
+                  )
+                }
+              />
 
-            {/* Customer Receipt & Verification Routes */}
-            <Route path="/receipt" element={<ReceiptPage businessWhatsApp={config.businessWhatsApp} />} />
-            <Route path="/receipt/:orderId" element={<ReceiptPage businessWhatsApp={config.businessWhatsApp} />} />
+              {/* Customer Authentication & Account Dashboard Routes */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignUpPage />} />
+              <Route
+                path="/dashboard"
+                element={<DashboardPage businessWhatsApp={config.businessWhatsApp} />}
+              />
 
-            {/* Fallback route */}
-            <Route
-              path="*"
-              element={
-                <div className="py-20 text-center space-y-4">
-                  <h2 className="text-2xl font-bold text-white">Page Not Found</h2>
-                  <p className="text-sm text-zinc-400">The requested page does not exist.</p>
-                  <button
-                    onClick={() => navigate('/')}
-                    className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-500"
-                  >
-                    Return to Home
-                  </button>
-                </div>
-              }
-            />
-          </Routes>
-        </main>
+              {/* 7 Required Legal Policy Pages */}
+              <Route path="/about-us" element={<AboutUs />} />
+              <Route path="/contact-us" element={<ContactUs />} />
+              <Route path="/terms-of-service" element={<TermsOfService />} />
+              <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+              <Route path="/refund-policy" element={<RefundPolicy />} />
+              <Route path="/shipping-policy" element={<ShippingPolicy />} />
+              <Route path="/how-to-order" element={<HowToOrder />} />
 
-        {/* Footer with Links to All 7 Policy Pages */}
-        <Footer
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          businessWhatsApp={config.businessWhatsApp}
-        />
+              {/* Customer Receipt & Verification Routes */}
+              <Route path="/receipt" element={<ReceiptPage businessWhatsApp={config.businessWhatsApp} />} />
+              <Route path="/receipt/:orderId" element={<ReceiptPage businessWhatsApp={config.businessWhatsApp} />} />
 
-        {/* Floating WhatsApp Support Button (0742235836) */}
-        <FloatingWhatsApp businessWhatsApp={config.businessWhatsApp} />
+              {/* Fallback route */}
+              <Route
+                path="*"
+                element={
+                  <div className="py-20 text-center space-y-4">
+                    <h2 className="text-2xl font-bold text-white">Page Not Found</h2>
+                    <p className="text-sm text-zinc-400">The requested page does not exist.</p>
+                    <button
+                      onClick={() => navigate('/')}
+                      className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-500"
+                    >
+                      Return to Home
+                    </button>
+                  </div>
+                }
+              />
+            </Routes>
+          </main>
 
-        {/* Order Lookup & PDF Receipt Retrieval Modal */}
-        <OrderLookupModal
-          isOpen={isLookupOpen}
-          onClose={() => setIsLookupOpen(false)}
-          businessWhatsApp={config.businessWhatsApp}
-        />
+          {/* Footer with Links to All 7 Policy Pages */}
+          <Footer
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            businessWhatsApp={config.businessWhatsApp}
+          />
 
-        {/* PayHere & Business Settings Modal */}
-        <SettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          onConfigUpdated={fetchConfig}
-        />
-      </div>
-    </AuthProvider>
+          {/* Floating WhatsApp Support Button (0742235836) */}
+          <FloatingWhatsApp businessWhatsApp={config.businessWhatsApp} />
+
+          {/* Order Lookup & PDF Receipt Retrieval Modal */}
+          <OrderLookupModal
+            isOpen={isLookupOpen}
+            onClose={() => setIsLookupOpen(false)}
+            businessWhatsApp={config.businessWhatsApp}
+          />
+
+          {/* PayHere & Business Settings Modal */}
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            onConfigUpdated={fetchConfig}
+          />
+        </div>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

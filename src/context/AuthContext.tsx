@@ -89,14 +89,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           Accept: 'application/json',
         },
       });
-      if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
         clearAuthSession();
         setCustomer(null);
         setToken(null);
         return;
       }
-      const data = await res.json();
-      if (data?.success && data.customer) {
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (data?.success && data.customer && typeof data.customer === 'object') {
         setCustomer(data.customer);
         setToken(activeToken);
         const isRemembered = Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
@@ -121,13 +124,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) {
-        return { success: false, error: data?.error || 'Login failed. Please check your credentials.' };
+      if (!res.ok || !data?.success || !data.token || !data.customer) {
+        return {
+          success: false,
+          error: data?.error || 'Login failed. Please check your email and password.',
+        };
       }
       const remember = payload.rememberMe !== false;
       persistAuthSession(data.token, data.customer, remember);
       setToken(data.token);
       setCustomer(data.customer);
+      setIsLoading(false);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error occurred during login.' };
@@ -142,12 +149,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) {
-        return { success: false, error: data?.error || 'Registration failed. Please check your details.' };
+      if (!res.ok || !data?.success || !data.token || !data.customer) {
+        return {
+          success: false,
+          error: data?.error || 'Registration failed. Please check your details and try again.',
+        };
       }
       persistAuthSession(data.token, data.customer, true);
       setToken(data.token);
       setCustomer(data.customer);
+      setIsLoading(false);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error occurred during registration.' };

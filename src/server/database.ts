@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { and, desc, eq, gt, or } from 'drizzle-orm';
-import { db } from '../db/index.ts';
+import { createPool, db } from '../db/index.ts';
 import {
   customers,
   orders,
@@ -29,6 +29,118 @@ export interface StoredOrder extends TransactionDetails {
 const PBKDF2_ITERATIONS = 120000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
+
+let schemaInitPromise: Promise<void> | null = null;
+
+/**
+ * Automatically creates missing PostgreSQL tables and indexes on first request
+ * if the connected database does not have them yet (e.g., fresh Vercel Postgres/Supabase).
+ * If tables already exist (e.g., provisioned via Cloud SQL UpdateSchema), skips DDL.
+ */
+export async function ensureSchemaInitialized(): Promise<void> {
+  if (!process.env.SQL_HOST) {
+    return;
+  }
+  if (!schemaInitPromise) {
+    schemaInitPromise = (async () => {
+      const pool = createPool();
+      try {
+        await pool.query('SELECT 1 FROM "customers" LIMIT 1');
+        return;
+      } catch (checkErr: any) {
+        // Only run DDL if the table is missing (42P01 = undefined_table)
+        if (checkErr?.code !== '42P01') {
+          return;
+        }
+      }
+
+      try {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS "users" (
+            "id" serial PRIMARY KEY NOT NULL,
+            "firebase_uid" varchar(128) NOT NULL UNIQUE,
+            "email" varchar(255) NOT NULL,
+            "created_at" timestamp DEFAULT now() NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS "customers" (
+            "id" serial PRIMARY KEY NOT NULL,
+            "customer_id" varchar(64) NOT NULL UNIQUE,
+            "firebase_uid" varchar(128) UNIQUE,
+            "full_name" varchar(120) NOT NULL,
+            "email" varchar(255) NOT NULL UNIQUE,
+            "whatsapp_number" varchar(40) NOT NULL,
+            "billing_address" text NOT NULL,
+            "city" varchar(100) NOT NULL,
+            "country" varchar(100) DEFAULT 'Sri Lanka' NOT NULL,
+            "password_hash" varchar(256) NOT NULL,
+            "password_salt" varchar(128) NOT NULL,
+            "email_verified" boolean DEFAULT true NOT NULL,
+            "created_at" timestamp DEFAULT now() NOT NULL,
+            "updated_at" timestamp DEFAULT now() NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS "customers_email_idx" ON "customers" ("email");
+          CREATE INDEX IF NOT EXISTS "customers_customer_id_idx" ON "customers" ("customer_id");
+          CREATE TABLE IF NOT EXISTS "orders" (
+            "id" serial PRIMARY KEY NOT NULL,
+            "order_id" varchar(64) NOT NULL UNIQUE,
+            "customer_id" varchar(64),
+            "order_access_token" varchar(128) NOT NULL,
+            "receipt_number" varchar(64),
+            "customer_name" varchar(120) NOT NULL,
+            "customer_email" varchar(255) NOT NULL,
+            "whatsapp_number" varchar(40) NOT NULL,
+            "billing_address" text NOT NULL,
+            "billing_city" varchar(100) NOT NULL,
+            "billing_country" varchar(100) DEFAULT 'Sri Lanka' NOT NULL,
+            "game_name" varchar(120) NOT NULL,
+            "player_uid" varchar(120) NOT NULL,
+            "server_zone" varchar(80),
+            "package_name" varchar(200) NOT NULL,
+            "amount_lkr" numeric(12, 2) NOT NULL,
+            "currency" varchar(10) DEFAULT 'LKR' NOT NULL,
+            "payment_method" varchar(32) DEFAULT 'visa' NOT NULL,
+            "payment_status" varchar(32) DEFAULT 'PENDING' NOT NULL,
+            "payhere_transaction_ref" varchar(128),
+            "payhere_amount" varchar(64),
+            "failure_reason" text,
+            "is_sandbox" boolean DEFAULT true NOT NULL,
+            "created_at" timestamp DEFAULT now() NOT NULL,
+            "completed_at" timestamp
+          );
+          CREATE INDEX IF NOT EXISTS "orders_order_id_idx" ON "orders" ("order_id");
+          CREATE INDEX IF NOT EXISTS "orders_customer_id_idx" ON "orders" ("customer_id");
+          CREATE INDEX IF NOT EXISTS "orders_customer_email_idx" ON "orders" ("customer_email");
+          CREATE TABLE IF NOT EXISTS "processed_notifications" (
+            "id" serial PRIMARY KEY NOT NULL,
+            "dedupe_key" varchar(255) NOT NULL UNIQUE,
+            "order_id" varchar(64) NOT NULL,
+            "payment_id" varchar(128),
+            "status_code" varchar(16) NOT NULL,
+            "processed_at" timestamp DEFAULT now() NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS "password_reset_tokens" (
+            "id" serial PRIMARY KEY NOT NULL,
+            "customer_id" varchar(64) NOT NULL,
+            "token_hash" varchar(128) NOT NULL,
+            "expires_at" timestamp NOT NULL,
+            "used" boolean DEFAULT false NOT NULL,
+            "created_at" timestamp DEFAULT now() NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS "pwd_reset_customer_idx" ON "password_reset_tokens" ("customer_id");
+          CREATE TABLE IF NOT EXISTS "revoked_session_tokens" (
+            "id" serial PRIMARY KEY NOT NULL,
+            "token_id" varchar(128) NOT NULL UNIQUE,
+            "expires_at" timestamp NOT NULL,
+            "revoked_at" timestamp DEFAULT now() NOT NULL
+          );
+        `);
+      } catch (err) {
+        console.warn('Auto-DDL skipped or not permitted for current database role:', err);
+      }
+    })();
+  }
+  await schemaInitPromise;
+}
 
 function getAuthSecret(): string {
   return (
@@ -131,6 +243,7 @@ export async function revokeSessionToken(token: string): Promise<void> {
   const payload = verifySessionTokenSignature(token);
   if (!payload) return;
   try {
+    await ensureSchemaInitialized();
     await db
       .insert(revokedSessionTokens)
       .values({
@@ -146,6 +259,7 @@ export async function revokeSessionToken(token: string): Promise<void> {
 
 export async function isSessionTokenRevoked(jti: string): Promise<boolean> {
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(revokedSessionTokens)
@@ -192,6 +306,7 @@ export function sanitizeCustomer(customer: StoredCustomer): CustomerProfile {
 export async function getCustomerByEmail(email: string): Promise<StoredCustomer | null> {
   const cleanEmail = email.trim().toLowerCase();
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(customers)
@@ -206,6 +321,7 @@ export async function getCustomerByEmail(email: string): Promise<StoredCustomer 
 
 export async function getCustomerById(id: string): Promise<StoredCustomer | null> {
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(customers)
@@ -220,6 +336,7 @@ export async function getCustomerById(id: string): Promise<StoredCustomer | null
 
 export async function getCustomerByFirebaseUid(firebaseUid: string): Promise<StoredCustomer | null> {
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(customers)
@@ -250,6 +367,7 @@ export async function createCustomer(data: {
     .toUpperCase()}`;
 
   try {
+    await ensureSchemaInitialized();
     const inserted = await db
       .insert(customers)
       .values({
@@ -285,6 +403,7 @@ export async function updateCustomerProfile(
   }
 ): Promise<StoredCustomer> {
   try {
+    await ensureSchemaInitialized();
     const updated = await db
       .update(customers)
       .set({
@@ -311,6 +430,7 @@ export async function updateCustomerProfile(
 export async function updateCustomerPassword(customerId: string, newPassword: string): Promise<void> {
   const { salt, hash } = hashPassword(newPassword);
   try {
+    await ensureSchemaInitialized();
     await db
       .update(customers)
       .set({
@@ -335,6 +455,7 @@ export async function createPasswordResetToken(customerId: string): Promise<{ to
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
   try {
+    await ensureSchemaInitialized();
     // Invalidate any previous unused tokens for this customer
     await db
       .update(passwordResetTokens)
@@ -364,6 +485,7 @@ export async function verifyAndConsumeResetToken(
   const now = new Date();
 
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(passwordResetTokens)
@@ -440,6 +562,7 @@ export async function saveOrder(order: StoredOrder): Promise<StoredOrder> {
     order.orderAccessToken || generateOrderAccessToken(order.orderId, emailFallback);
 
   try {
+    await ensureSchemaInitialized();
     const values = {
       orderId: order.orderId,
       customerId: order.customerId || null,
@@ -494,6 +617,7 @@ export async function getOrderById(orderId: string): Promise<StoredOrder | null>
   if (!orderId) return null;
   const cleanId = orderId.trim().toUpperCase();
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(orders)
@@ -516,6 +640,7 @@ export async function getOrdersByCustomer(
   customerEmail?: string
 ): Promise<StoredOrder[]> {
   try {
+    await ensureSchemaInitialized();
     const cleanEmail = customerEmail?.trim().toLowerCase();
     const condition = cleanEmail
       ? or(eq(orders.customerId, customerId), eq(orders.customerEmail, cleanEmail))
@@ -536,6 +661,7 @@ export async function getOrdersByCustomer(
 
 export async function getRecentOrders(limit = 15): Promise<StoredOrder[]> {
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(orders)
@@ -550,6 +676,7 @@ export async function getRecentOrders(limit = 15): Promise<StoredOrder[]> {
 
 export async function hasProcessedNotification(dedupeKey: string): Promise<boolean> {
   try {
+    await ensureSchemaInitialized();
     const rows = await db
       .select()
       .from(processedNotifications)
@@ -569,6 +696,7 @@ export async function markNotificationProcessed(
   statusCode: string
 ): Promise<void> {
   try {
+    await ensureSchemaInitialized();
     await db
       .insert(processedNotifications)
       .values({

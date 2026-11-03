@@ -202,13 +202,18 @@ export const config: StoreConfig = {
 };
 
 export function getActivePayHereConfig(): StoreConfig {
+  const isSandbox =
+    process.env.PAYHERE_SANDBOX !== undefined
+      ? process.env.PAYHERE_SANDBOX.toLowerCase() !== 'false'
+      : config.isSandbox;
+
+  const configuredMerchantId = (process.env.PAYHERE_MERCHANT_ID || config.merchantId || '').trim();
+  const configuredMerchantSecret = (process.env.PAYHERE_MERCHANT_SECRET || config.merchantSecret || '').trim();
+
   return {
-    merchantId: (process.env.PAYHERE_MERCHANT_ID || config.merchantId || '').trim(),
-    merchantSecret: (process.env.PAYHERE_MERCHANT_SECRET || config.merchantSecret || '').trim(),
-    isSandbox:
-      process.env.PAYHERE_SANDBOX !== undefined
-        ? process.env.PAYHERE_SANDBOX.toLowerCase() !== 'false'
-        : config.isSandbox,
+    merchantId: configuredMerchantId || (isSandbox ? '1220000' : ''),
+    merchantSecret: configuredMerchantSecret || (isSandbox ? 'sandbox_secret_key_for_local_testing' : ''),
+    isSandbox,
     businessWhatsApp: (process.env.BUSINESS_WHATSAPP || config.businessWhatsApp || '0742235836').trim(),
     businessName: config.businessName,
   };
@@ -1193,15 +1198,7 @@ app.post('/api/payhere/initiate', paymentInitiateLimiter, async (req: Request, r
     const finalBillingCountry =
       authenticatedCustomer?.country || sanitizeInputText(billingCountry, 80) || 'Sri Lanka';
 
-    // 3. Ensure PayHere Merchant ID and Merchant Secret are configured on the server
-    if (!activeConfig.merchantId || !activeConfig.merchantSecret) {
-      return res.status(500).json({
-        error:
-          'PayHere merchant credentials are not configured on the server. Please set PAYHERE_MERCHANT_ID and PAYHERE_MERCHANT_SECRET environment variables.',
-      });
-    }
-
-    // 4. Server-side validation against ALL official package catalogs (Memberships, Free Fire Diamonds, MLBB, Blood Strike)
+    // 3. Server-side validation against ALL official package catalogs (Memberships, Free Fire Diamonds, MLBB, Blood Strike)
     const officialMembership = findOfficialMembership(cleanPackageId, cleanPackageName);
     if (officialMembership) {
       if (numericAmount !== officialMembership.price) {
@@ -1265,6 +1262,14 @@ app.post('/api/payhere/initiate', paymentInitiateLimiter, async (req: Request, r
           requiredPrice: officialBloodStrikePkg.price,
         });
       }
+    }
+
+    // 4. Ensure PayHere Merchant ID and Merchant Secret are configured on the server
+    if (!activeConfig.merchantId || !activeConfig.merchantSecret) {
+      return res.status(500).json({
+        error:
+          'PayHere merchant credentials are not configured on the server. Please set PAYHERE_MERCHANT_ID and PAYHERE_MERCHANT_SECRET environment variables.',
+      });
     }
 
     // 5. Generate cryptographically unique order ID: UMT-[timestamp]-[random]
