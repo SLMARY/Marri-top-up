@@ -28,7 +28,7 @@ import {
   getRecentOrders,
   hasProcessedNotification,
   markNotificationProcessed,
-} from './database';
+} from './database.ts';
 
 dotenv.config();
 
@@ -210,7 +210,7 @@ export function getActivePayHereConfig(): StoreConfig {
 
   return {
     merchantId: configuredMerchantId || (isSandbox ? '1220000' : ''),
-    merchantSecret: configuredMerchantSecret || (isSandbox ? 'sandbox_secret_key_for_local_testing' : ''),
+    merchantSecret: configuredMerchantSecret,
     isSandbox,
     businessWhatsApp: (process.env.BUSINESS_WHATSAPP || config.businessWhatsApp || '0742235836').trim(),
     businessName: config.businessName,
@@ -315,8 +315,8 @@ async function getAuthenticatedCustomerFromRequest(req: Request): Promise<Stored
 
   // 2. Optional fallback check for Firebase Auth ID token (lazy-loaded so Vercel serverless never fails at boot)
   try {
-    const { adminAuth } = await import('../lib/firebase-admin');
-    const { getOrCreateUser } = await import('../db/users');
+    const { adminAuth } = await import('../lib/firebase-admin.ts');
+    const { getOrCreateUser } = await import('../db/users.ts');
     const decoded = await adminAuth.verifyIdToken(token);
     if (decoded && decoded.uid) {
       const email = (decoded.email || `${decoded.uid}@firebase.user`).toLowerCase();

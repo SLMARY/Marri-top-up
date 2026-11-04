@@ -414,7 +414,7 @@ async function ensureSchemaInitialized() {
   return schemaInitPromise;
 }
 function getAuthSecret() {
-  return process.env.AUTH_SECRET || process.env.PAYHERE_MERCHANT_SECRET || "uchiha-marri-topup-auth-hmac-secret-2026";
+  return process.env.AUTH_SECRET || "uchiha-marri-topup-auth-hmac-secret-2026";
 }
 function hashPassword(password, salt) {
   const finalSalt = salt || crypto.randomBytes(16).toString("hex");
@@ -1101,7 +1101,7 @@ function getActivePayHereConfig() {
   const configuredMerchantSecret = (process.env.PAYHERE_MERCHANT_SECRET || config.merchantSecret || "").trim();
   return {
     merchantId: configuredMerchantId || (isSandbox ? "1220000" : ""),
-    merchantSecret: configuredMerchantSecret || (isSandbox ? "sandbox_secret_key_for_local_testing" : ""),
+    merchantSecret: configuredMerchantSecret,
     isSandbox,
     businessWhatsApp: (process.env.BUSINESS_WHATSAPP || config.businessWhatsApp || "0742235836").trim(),
     businessName: config.businessName

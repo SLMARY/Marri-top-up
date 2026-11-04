@@ -3,15 +3,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { and, desc, eq, gt, or } from 'drizzle-orm';
-import { createPool, db } from '../db/index';
+import { createPool, db } from '../db/index.ts';
 import {
   customers,
   orders,
   passwordResetTokens,
   processedNotifications,
   revokedSessionTokens,
-} from '../db/schema';
-import { CustomerProfile, TransactionDetails } from '../types';
+} from '../db/schema.ts';
+import { CustomerProfile, TransactionDetails } from '../types.ts';
 
 export interface StoredCustomer extends CustomerProfile {
   passwordHash: string;
@@ -220,7 +220,6 @@ export async function ensureSchemaInitialized(): Promise<boolean> {
 function getAuthSecret(): string {
   return (
     process.env.AUTH_SECRET ||
-    process.env.PAYHERE_MERCHANT_SECRET ||
     'uchiha-marri-topup-auth-hmac-secret-2026'
   );
 }

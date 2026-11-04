@@ -5,6 +5,12 @@
       "VITE_CONFIG_NATIVE_IGNORE_WARNING": "true"
     }
   },
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 30,
+      "includeFiles": "api/_bundle.js"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
