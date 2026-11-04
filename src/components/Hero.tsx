@@ -55,7 +55,15 @@ export const Hero: React.FC<HeroProps> = ({ onPayNowClick, businessWhatsApp }) =
             </h1>
 
             {/* Sub-headline */}
-            <p className="text-base sm:text-lg text-zinc-300 max-w-2xl leading-relaxed">
+            <p
+              className="text-base sm:text-lg text-zinc-300 max-w-2xl leading-relaxed"
+              style={{
+                paddingLeft: '143px',
+                paddingTop: '0px',
+                paddingRight: '-15px',
+                paddingBottom: '-7px',
+              }}
+            >
               Enter your Player ID and custom amount in Sri Lankan Rupees (LKR).
               Instant top-up credits processed via official PayHere Visa & Mastercard gateway with
               instant verification and downloadable PDF receipts.
